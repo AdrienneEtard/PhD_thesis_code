@@ -4,7 +4,7 @@
 
 ## Function to apply to a list of PREDICTS studies, to prepare community matrices -- with an abundance option
 # to return only community matrices with abundances (excluding sites for which only presence/absence was measured)
-Community_matrix <- function(Predicts_SS_data, Abundance) {
+Create_assemblage_matrix <- function(Predicts_SS_data, Abundance) {
   
   # from predicts site level data, prepare a community matrix: 
   # each row is a site, each column is a species.
@@ -14,30 +14,42 @@ Community_matrix <- function(Predicts_SS_data, Abundance) {
   Community <- Predicts_SS_data %>%
     dplyr::select("Best_guess_binomial", "SSBS", "Effort_corrected_measurement")
   
-  ## If abundance only is wanted (arg Abundance=TRUE), then return NA if metrics is presence/absence
+  ## If abundance only is wanted (arg Abundance=TRUE), then return NA if metrics is presence/absence only
   if(Abundance) {
-    if(unique(Predicts_SS_data$Diversity_metric_type)!="Abundance") {return(NA); next}
+    
+    if(unique(Predicts_SS_data$Diversity_metric_type)!="Abundance") {
+      return(NA); 
+      next
+      }
+    
   } 
     
-    ## verify that the species pool has more than one species; otherwise not possible to compute functional richness
+    ## verify that the species pool has more than one species; otherwise not possible to compute functional richness / possibly other functional diversity indices
     n <- length(unique(Community$Best_guess_binomial))
-    if(n==1){return(NA)}
+    
+    if(n==1){
+      
+      print("Species has only one species")
+      return(NA)
+      }
     
     else{
       
-      ## verify that the same set of species is sampled across all the sites of the study; otherwise not possible to compute FR
+      ## verify that the same set of species is sampled across all the sites of the study; otherwise not possible to compute functional richness
       check <- Community %>%
-        group_by(SSBS, Best_guess_binomial) %>%
-        summarise(Count=n()) %>%
-        group_by(Best_guess_binomial) %>%
-        summarise(Count=n())
+        dplyr::group_by(SSBS, Best_guess_binomial) %>%
+        dplyr::summarise(Count=n()) %>%
+        dplyr::group_by(Best_guess_binomial) %>%
+        dplyr::summarise(Count=n())
       
-      if (length(unique(check$Count))!=1) {return(NA)}
+      if (length(unique(check$Count))!=1) {
+        print("different set of species sampled across the site")
+        return(NA)
+        }
       
+      ## if all checks are good, then create assemblage matrix for the study (site by species)
+      ## ie: for studies that have more than one species in the species pool and for which the same sets of species have been sampled, prepare assemblage matrix
       else {
-        
-        ## for studies that have more than one species in the species pool and for which the same sets of species have been sampled,
-        ## prepare community matrix
         
         # order within sites by alphabetical order
         Community <- Community %>% 
@@ -47,32 +59,46 @@ Community_matrix <- function(Predicts_SS_data, Abundance) {
         # put 1 for presence of the species (rather than the metric provided, which can be abundance)
         if(!Abundance){
           Community <- Community %>%
-            mutate(Effort_corrected_measurement=
-                     ifelse(Effort_corrected_measurement!=0,1,0))
+            mutate(Effort_corrected_measurement=ifelse(Effort_corrected_measurement!=0, 1, 0))
         } 
         
-        # select unique sites and sum occurence over similar sites -- in case there are replicates
-        Community <- unique(Community[c("Best_guess_binomial", "SSBS", "Effort_corrected_measurement")])
-        Community <- Community %>% 
-          group_by(Best_guess_binomial, SSBS) %>%
-          summarise(Sum=sum(Effort_corrected_measurement))
+        # select unique sites and sum occurrence over similar sites -- in case there are replicates (should not happen)
+        if(length(unique(Community$SSBS))!=length(Community$SSBS)) {
+          print("replicated sites!")
+          }
         
-        # prepare community matrix: rows are sites, columns are species
+        Community <- unique(Community[c("Best_guess_binomial", "SSBS", "Effort_corrected_measurement")])
+        
+        Community <- Community %>% 
+          dplyr::group_by(Best_guess_binomial, SSBS) %>%
+          dplyr::summarise(Sum=sum(Effort_corrected_measurement))
+        
+        ## Now prepare community matrix: rows are sites, columns are species
         Comm.matrix <- matrix(ncol=length(unique(Community$Best_guess_binomial)),
                               nrow=length(unique(Community$SSBS))) %>%
           as.data.frame()
+        
         row.names(Comm.matrix) <- unique(Community$SSBS)
         colnames(Comm.matrix) <- unique(Community$Best_guess_binomial)
         
+        ## fill in the matrix with abundance / presence-absence data
         for (i in 1:ncol(Comm.matrix)){
           Comm.matrix[,i] <- Community$Sum[Community$Best_guess_binomial==colnames(Comm.matrix)[i]]
         }
         
+        ## Additional checks
+        
         # check that all communities (sites) have non-zero total abundance/presence
-        # (at least one species occurs); select sites that have non-zero total abundance
+        # (at least one species occurs); 
+        # select sites that have non-zero total abundance if it happens that total abundance is 0
         Comm.matrix$TotAb <- apply(Comm.matrix, 1, sum, na.rm=TRUE)
+        if(any(Comm.matrix$TotAb)==0){
+          print("0 total abundance!")
+        }
+        
         Comm.matrix <- subset(Comm.matrix, TotAb != 0)
-        Comm.matrix <- Comm.matrix %>% dplyr::select(-TotAb)
+        Comm.matrix <- Comm.matrix %>%
+          dplyr::select(-TotAb)
         
         # Check that species occur at least at one site;
         # select species that occur at least at one site
@@ -80,6 +106,7 @@ Community_matrix <- function(Predicts_SS_data, Abundance) {
         Todrop <- which(Comm.matrix[nrow(Comm.matrix),]==0)
         
         if (length(Todrop)!=0){
+          print("")
           Comm.matrix <- Comm.matrix[-nrow(Comm.matrix), -Todrop]
         }  
         
